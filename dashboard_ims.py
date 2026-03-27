@@ -72,33 +72,54 @@ def compute_features(signal):
 def process_zip_files(zip_bytes, sep_val, col_time, col_sig):
     rows = []
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        # Filtrar solo archivos válidos y ordenar alfabéticamente
-        valid_files = sorted([n for n in z.namelist() if n.endswith(('.csv', '.txt')) and not n.startswith('__MACOSX')])
-        
-        for name in valid_files:
+        valid_files = sorted([
+            n for n in z.namelist()
+            if n.endswith(('.csv', '.txt')) and not n.startswith('__MACOSX')
+        ])
+
+        if not valid_files:
+            return pd.DataFrame()
+
+        bar = st.progress(0, text="Iniciando procesamiento...")
+        total = len(valid_files)
+
+        for i, name in enumerate(valid_files):
+            # Actualiza la barra cada 10 archivos
+            if i % 10 == 0:
+                bar.progress((i + 1) / total, 
+                             text=f"Procesando archivo {i+1} de {total} — {name.split('/')[-1]}")
+
             with z.open(name) as f:
-                # Leer solo las columnas necesarias para ahorrar memoria
                 usecols = [col_sig] if col_time == "Usar nombre del archivo" else [col_time, col_sig]
                 try:
-                    df_sig = pd.read_csv(f, sep=sep_val, usecols=usecols, engine="python")
+                    # float32 usa la mitad de RAM que float64
+                    df_sig = pd.read_csv(f, sep=sep_val, usecols=usecols,
+                                         engine="python", dtype=np.float32)
                 except Exception:
-                    continue # Ignorar archivos que no cumplan la estructura
-            
+                    continue
+
             sig = df_sig[col_sig].dropna().astype(np.float64).to_numpy()
-            if len(sig) == 0: continue
-            
-            # Determinar el Timestamp para la tendencia
+            if len(sig) == 0:
+                continue
+
             if col_time == "Usar nombre del archivo":
-                dt = name.split('/')[-1] # Usa el nombre del archivo
+                dt = name.split('/')[-1]
             else:
                 try:
-                    dt = pd.to_datetime(df_sig[col_time].iloc[0]) # Intenta extraer el timestamp real
-                except:
-                    dt = str(df_sig[col_time].iloc[0]) # Fallback a string si no es fecha estándar
+                    dt = pd.to_datetime(df_sig[col_time].iloc[0])
+                except Exception:
+                    dt = str(df_sig[col_time].iloc[0])
 
             feats = compute_features(sig)
-            rows.append({"datetime": dt, "filename": name.split('/')[-1], "n_samples": sig.size, **feats})
-            
+            rows.append({
+                "datetime": dt,
+                "filename": name.split('/')[-1],
+                "n_samples": sig.size,
+                **feats
+            })
+
+        bar.empty()  # Limpia la barra al terminar
+
     return pd.DataFrame(rows)
 
 # ─────────────────────────────────────────
