@@ -357,8 +357,8 @@ with st.sidebar:
     sigma_mult  = st.slider("Multiplicador σ", 1.0, 5.0, 3.0, 0.5)
     st.markdown("#### Datos del informe")
     client_name  = st.text_input("Cliente",  value="EMPRESA CLIENTE")
-    equipo_name  = st.text_input("Equipo",   value="Rodamiento IMS – Canal 1")
-    ingeniero_nm = st.text_input("Realizó",  value="Ing. Donald Florian")
+    equipo_name  = st.text_input("Equipo",   value="Equipo")
+    ingeniero_nm = st.text_input("Realizó",  value="Ing. ")
     analyze_btn  = st.button("▶  Analizar", use_container_width=True, type="primary")
     st.markdown("---")
     st.markdown(f"<span style='color:{PAL['muted']};font-size:.78rem'>SEMAPI · IMS Dataset · fs={FS_HZ/1000:.0f} kHz</span>",
