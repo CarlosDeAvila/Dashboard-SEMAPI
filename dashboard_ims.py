@@ -406,7 +406,8 @@ if df.empty:
     st.stop()
 
 # Thresholds
-bn = min(int(baseline_n), len(df))
+bn = max(2, int(len(df) * baseline_pct / 100))
+st.caption(f"📐 Baseline automático: primeros **{bn} archivos** ({baseline_pct}% de {len(df)})")
 base_rms  = df["rms"].iloc[:bn];  mu_r, sd_r = base_rms.mean(),  base_rms.std(ddof=1) if bn>1 else 0.
 base_kurt = df["kurtosis_excess"].iloc[:bn]; mu_k, sd_k = base_kurt.mean(), base_kurt.std(ddof=1) if bn>1 else 0.
 thr_rms  = mu_r + sigma_mult*sd_r
