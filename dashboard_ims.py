@@ -348,7 +348,7 @@ with st.sidebar:
     st.markdown("### 4. Datos del Informe")
     client_name  = st.text_input("Cliente",  value="PLANTA INDUSTRIAL")
     equipo_name  = st.text_input("Equipo",   value="Bomba Centrífuga - Lado Acople")
-    ingeniero_nm = st.text_input("Realizó",  value="Ing. Donald Florian")
+    ingeniero_nm = st.text_input("Realizó",  value="Ing. ")
     
     analyze_btn = st.button("▶  Procesar y Analizar", use_container_width=True, type="primary")
 
