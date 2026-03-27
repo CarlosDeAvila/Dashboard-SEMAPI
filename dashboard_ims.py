@@ -341,7 +341,8 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 3. Parámetros Mecánicos")
     fs_hz = st.number_input("Frecuencia de Muestreo (Hz)", min_value=100, max_value=100000, value=25600, step=100)
-    baseline_n = st.number_input("Muestras baseline", min_value=10, max_value=1000, value=50, step=10)
+    baseline_pct = st.slider("Baseline (% inicial de datos)", 5, 40, 20, 5,
+                          help="Porcentaje de los primeros archivos usados como referencia de condición normal.")
     sigma_mult = st.slider("Multiplicador σ (Alarmas)", 1.0, 5.0, 3.0, 0.5)
     
     st.markdown("### 4. Datos del Informe")
@@ -357,6 +358,10 @@ with st.sidebar:
 st.markdown("# ⚙️ Dashboard de Monitoreo de Condición")
 st.markdown("## Análisis de Tendencias de Vibración · SEMAPI")
 st.markdown("---")
+
+if cols and col_sig:
+    with st.expander("🔍 Vista previa del primer archivo del ZIP"):
+        st.dataframe(df_peek, use_container_width=True)
 
 if not analyze_btn:
     st.info("👈 Sube un archivo .zip, mapea tus columnas en la barra lateral y presiona **Procesar y Analizar**.")
