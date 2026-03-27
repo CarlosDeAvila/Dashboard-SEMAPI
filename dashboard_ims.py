@@ -59,12 +59,16 @@ st.markdown(f"""
 # ─────────────────────────────────────────
 VALID_EXTENSIONS = ('.csv', '.txt', '.dat', '.asc', '.tsv', '.prn', '.out')
 
+# ✅ NUEVO — detecta si la "extensión" es numérica (caso IMS)
 def is_valid_file(name: str) -> bool:
     base = name.split('/')[-1]
     if name.startswith('__MACOSX') or base.startswith('.') or name.endswith('/'):
         return False
     if '.' not in base:
-        return True  # Archivos sin extensión (IMS Cincinnati, etc.)
+        return True  # Sin extensión: válido
+    ext = base.rsplit('.', 1)[-1]
+    if ext.isdigit():
+        return True  # Extensión numérica tipo .24 = formato IMS: válido
     return base.endswith(VALID_EXTENSIONS)
 
 # ─────────────────────────────────────────
