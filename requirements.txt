@@ -1,6 +1,6 @@
-numpy
-pandas
+numpy<2.0.0
+pandas<3.0.0
 plotly
 matplotlib
-streamlit
+streamlit>=1.35.0
 reportlab
