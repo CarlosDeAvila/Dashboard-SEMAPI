@@ -342,7 +342,7 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
     story.append(Spacer(1, 18))
     fdata = [
         [Paragraph("<b>Realizó:</b>", S["bold_blue"]),           Paragraph("<b>Revisó:</b>", S["bold_blue"])],
-        [Paragraph(ingeniero, S["body"]),                          Paragraph("Ing. Eloy Balza", S["body"])],
+        [Paragraph(ingeniero, S["body"]),                          Paragraph("Ing. "XXXXXX"", S["body"])],
         [Paragraph("Líder de Mantenimiento", S["body"]),          Paragraph("", S["body"])],
         [Paragraph("Especialista en Vibraciones", S["body"]),     Paragraph("", S["body"])],
     ]
