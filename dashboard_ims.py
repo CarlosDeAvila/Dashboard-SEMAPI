@@ -87,6 +87,37 @@ def compute_features(signal):
     cf   = peak / rms if rms > 0 else np.nan
     return {"rms": rms, "peak": peak, "kurtosis_excess": kurt, "crest_factor": cf}
 
+def compute_fft(signal, fs_hz: float):
+    """Devuelve (freqs_hz, magnitud_lineal) del espectro unilateral."""
+    s = signal.astype(np.float64)
+    n = len(s)
+    if n < 4:
+        return np.array([0.0]), np.array([0.0])
+    window  = np.hanning(n)
+    s_win   = s * window
+    spectrum = np.abs(np.fft.rfft(s_win)) * 2.0 / n      # amplitud pico
+    freqs    = np.fft.rfftfreq(n, d=1.0 / fs_hz)
+    return freqs, spectrum
+
+def dominant_frequency(freqs, spectrum) -> float:
+    """Frecuencia con mayor amplitud espectral."""
+    if len(spectrum) < 2:
+        return np.nan
+    idx = int(np.argmax(spectrum[1:])) + 1   # ignora DC (índice 0)
+    return float(freqs[idx])
+
+@st.cache_data(show_spinner=False)
+def load_single_signal(zip_bytes: bytes, filename: str, sep_val: str, col_sig: str | None):
+    """Carga la señal cruda de UN archivo dentro del ZIP para mostrar su FFT."""
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        with z.open(filename) as f:
+            df_s, sig_col, _ = read_flexible(f, sep_val, col_sig)
+    if col_sig and col_sig in df_s.columns:
+        sig_col = col_sig
+    elif sig_col not in df_s.columns:
+        sig_col = df_s.columns[0]
+    return df_s[sig_col].dropna().astype(np.float64).to_numpy()
+
 def read_flexible(file_obj, sep_val: str, col_sig: str | None = None, usecols=None):
     raw = file_obj.read()
     try:
@@ -139,7 +170,10 @@ def process_zip_files(zip_bytes: bytes, sep_val: str, col_time: str, col_sig: st
                 dt = name.split('/')[-1]
 
             feats = compute_features(sig)
-            rows.append({"datetime": dt, "filename": name.split('/')[-1], "n_samples": sig.size, **feats})
+            freqs_f, spec_f = compute_fft(sig, fs_hz)
+            dom_freq = dominant_frequency(freqs_f, spec_f)
+            rows.append({"datetime": dt, "filename": name.split('/')[-1], "n_samples": sig.size,
+                         "dominant_freq": dom_freq, **feats})
 
         bar.empty()
     return pd.DataFrame(rows)
@@ -158,6 +192,32 @@ def peek_zip(uploaded_zip, sep_val: str):
 # ─────────────────────────────────────────
 # PLOTLY CHARTS
 # ─────────────────────────────────────────
+def plotly_fft(freqs, spectrum, title="Espectro de Frecuencia", fs_hz=20_000):
+    """Gráfica interactiva del espectro FFT unilateral."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=freqs, y=spectrum,
+        mode="lines", name="Amplitud",
+        line=dict(color=PAL["accent"], width=1.4),
+        fill="tozeroy", fillcolor="rgba(79,142,247,0.15)",
+        hovertemplate="<b>%{x:.1f} Hz</b><br>Amplitud: %{y:.6f}<extra></extra>",
+    ))
+    # Marcar frecuencia dominante
+    if len(spectrum) > 1:
+        dom_idx = int(np.argmax(spectrum[1:])) + 1
+        fig.add_vline(x=float(freqs[dom_idx]), line_dash="dash", line_color=PAL["danger"],
+                      annotation_text=f"f_dom = {freqs[dom_idx]:.1f} Hz",
+                      annotation_font_color=PAL["danger"])
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=14, color=PAL["text"])),
+        paper_bgcolor=PAL["card"], plot_bgcolor=PAL["card"], font=dict(color=PAL["text"], size=12),
+        xaxis=dict(gridcolor="#2A2D3E", title="Frecuencia (Hz)", range=[0, fs_hz / 2]),
+        yaxis=dict(gridcolor="#2A2D3E", title="Amplitud"),
+        margin=dict(l=20, r=20, t=48, b=20), height=340,
+        legend=dict(bgcolor="rgba(0,0,0,0)"),
+    )
+    return fig
+
 def plotly_line(df, y_col, title, color, threshold=None, thr_label="Umbral"):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["datetime"], y=df[y_col], mode="lines+markers", name=y_col,
@@ -183,6 +243,29 @@ def plotly_line(df, y_col, title, color, threshold=None, thr_label="Umbral"):
 # ─────────────────────────────────────────
 # PDF HELPERS
 # ─────────────────────────────────────────
+def make_fft_png(freqs, spectrum, fs_hz):
+    fig, ax = plt.subplots(figsize=(7, 2.6))
+    ax.plot(freqs, spectrum, color="#2563EB", linewidth=1.0)
+    ax.fill_between(freqs, spectrum, alpha=0.2, color="#2563EB")
+    if len(spectrum) > 1:
+        dom_idx = int(np.argmax(spectrum[1:])) + 1
+        ax.axvline(freqs[dom_idx], color="#CC3333", linestyle="--", linewidth=1,
+                   label=f"f_dom = {freqs[dom_idx]:.1f} Hz")
+        ax.legend(fontsize=7)
+    ax.set_xlim(0, fs_hz / 2)
+    ax.set_xlabel("Frecuencia (Hz)", fontsize=8)
+    ax.set_ylabel("Amplitud", fontsize=8)
+    ax.tick_params(labelsize=7)
+    ax.grid(True, alpha=0.3)
+    ax.set_facecolor("#F8F9FB")
+    fig.patch.set_facecolor("white")
+    fig.tight_layout(pad=0.5)
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    buf.seek(0)
+    return buf
+
 def make_chart_png(df, y_col, ylabel, color, threshold=None):
     fig, ax = plt.subplots(figsize=(7, 2.6))
     is_cat = df["datetime"].dtype == "O"
@@ -256,7 +339,7 @@ def section_box(label, S):
 # ─────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────
-def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz):
+def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs=None, fft_spectrum=None):
     buf = io.BytesIO()
     fecha_full = datetime.now().strftime("%d/%m/%Y")
     fecha_str  = datetime.now().strftime("%B %Y").capitalize()
@@ -292,6 +375,7 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
         ["RMS",          f"{df['rms'].iloc[0]:.5f}",             f"{df['rms'].iloc[-1]:.5f}",            f"{df['rms'].max():.5f}",            f"{thr_rms:.5f}"],
         ["Kurtosis",     f"{df['kurtosis_excess'].iloc[0]:.3f}",f"{df['kurtosis_excess'].iloc[-1]:.3f}",f"{df['kurtosis_excess'].max():.3f}",f"{thr_kurt:.3f}"],
         ["Crest Factor", f"{df['crest_factor'].iloc[0]:.3f}",  f"{df['crest_factor'].iloc[-1]:.3f}",  f"{df['crest_factor'].max():.3f}",  "—"],
+        ["Frec. Dominante (Hz)", f"{df['dominant_freq'].iloc[0]:.1f}", f"{df['dominant_freq'].iloc[-1]:.1f}", f"{df['dominant_freq'].max():.1f}", "—"],
     ]
     ft = Table([hdr] + rows_tbl, colWidths=[1.9*inch, 1.0*inch, 1.0*inch, 1.0*inch, 1.1*inch], repeatRows=1)
     ft.setStyle(TableStyle([
@@ -311,10 +395,17 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
         ("GRÁFICA DE TENDENCIA – RMS",               "rms",             "RMS",          "#2563EB", thr_rms),
         ("GRÁFICA DE TENDENCIA – KURTOSIS (EXCESS)",  "kurtosis_excess", "Kurtosis",     "#7C3AED", thr_kurt),
         ("GRÁFICA DE TENDENCIA – CREST FACTOR",       "crest_factor",    "Crest Factor", "#059669", None),
+        ("GRÁFICA DE TENDENCIA – FRECUENCIA DOMINANTE", "dominant_freq", "Frec. Dom. (Hz)", "#D97706", None),
     ]:
         story.append(section_box(label, S))
         story.append(Spacer(1, 6))
         story.append(RLImage(make_chart_png(df, y_col, ylabel, color, thr), width=6.5*inch, height=2.3*inch))
+        story.append(Spacer(1, 14))
+
+    if fft_freqs is not None and fft_spectrum is not None:
+        story.append(section_box("ESPECTRO DE FRECUENCIA – FFT (ARCHIVO DE REFERENCIA)", S))
+        story.append(Spacer(1, 6))
+        story.append(RLImage(make_fft_png(fft_freqs, fft_spectrum, fs_hz), width=6.5*inch, height=2.3*inch))
         story.append(Spacer(1, 14))
 
     n_rms  = len(alarm_rms)
@@ -354,8 +445,8 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
     return buf.getvalue()
 
 @st.cache_data(show_spinner=False)
-def get_cached_pdf(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz):
-    return generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz)
+def get_cached_pdf(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs=None, fft_spectrum=None):
+    return generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs, fft_spectrum)
 
 # ─────────────────────────────────────────
 # SIDEBAR
@@ -442,7 +533,10 @@ with st.sidebar:
     equipo_name  = st.text_input("Equipo",   value="Bomba Centrífuga - Lado Acople")
     ingeniero_nm = st.text_input("Realizó",  value="Ing. ")
 
-    analyze_btn = st.button("▶  Procesar y Analizar", use_container_width=True, type="primary")
+# Creamos el botón, pero no guardamos su valor directamente
+    if st.button("▶  Procesar y Analizar", use_container_width=True, type="primary"):
+        # Cuando le dan clic, guardamos en la "memoria" que ya se analizó
+        st.session_state.datos_procesados = True
 
 # ─────────────────────────────────────────
 # HEADER
@@ -455,12 +549,9 @@ if df_peek is not None and col_sig:
     with st.expander("🔍 Vista previa del primer archivo del ZIP"):
         st.dataframe(df_peek, use_container_width=True)
 
-if not analyze_btn:
+# Verificamos si existe en la memoria. Si no existe o es falso, detenemos la app
+if not st.session_state.get("datos_procesados", False):
     st.info("👈 Sube un archivo .zip, mapea tus columnas en la barra lateral y presiona **Procesar y Analizar**.")
-    st.stop()
-
-if not uploaded_zip or not col_sig:
-    st.warning("⚠️ Faltan datos o no se seleccionó la columna de señal.")
     st.stop()
 
 # ─────────────────────────────────────────
@@ -529,8 +620,55 @@ with c2:
     st.plotly_chart(plotly_line(df, "kurtosis_excess", "Tendencia Kurtosis (Impulsividad)",
                                 "#A78BFA", thr_kurt, f"Umbral {sigma_mult:.1f}σ"),
                     use_container_width=True)
-st.plotly_chart(plotly_line(df, "crest_factor", "Tendencia Factor de Cresta (Picos)", "#34D399"),
-                use_container_width=True)
+
+c3, c4 = st.columns(2)
+with c3:
+    st.plotly_chart(plotly_line(df, "crest_factor", "Tendencia Factor de Cresta (Picos)", "#34D399"),
+                    use_container_width=True)
+with c4:
+    st.plotly_chart(plotly_line(df, "dominant_freq", "Tendencia Frecuencia Dominante (Hz)", "#F59E0B"),
+                    use_container_width=True)
+
+# ─────────────────────────────────────────
+# FFT SPECTRAL ANALYSIS SECTION
+# ─────────────────────────────────────────
+st.markdown("---")
+st.markdown("### 📡 Análisis Espectral – FFT")
+
+fft_file = st.selectbox(
+    "Selecciona un archivo para ver su espectro de frecuencia",
+    df["filename"].tolist(),
+    index=0,
+    key="fft_selector",
+)
+
+fft_freqs_viz = fft_spectrum_viz = None
+
+if fft_file:
+    # Buscar el nombre completo dentro del ZIP (puede tener subdirectorio)
+    with zipfile.ZipFile(io.BytesIO(uploaded_zip.getvalue())) as z_names:
+        all_valid = [n for n in z_names.namelist() if is_valid_file(n)]
+    full_name = next((n for n in all_valid if n.split("/")[-1] == fft_file), fft_file)
+
+    with st.spinner("Calculando FFT…"):
+        sig_fft = load_single_signal(uploaded_zip.getvalue(), full_name, sep_val, col_sig)
+
+    if len(sig_fft) >= 4:
+        fft_freqs_viz, fft_spectrum_viz = compute_fft(sig_fft, fs_hz)
+        dom_f = dominant_frequency(fft_freqs_viz, fft_spectrum_viz)
+
+        fi1, fi2, fi3 = st.columns(3)
+        fi1.metric("Muestras", f"{len(sig_fft):,}")
+        fi2.metric("Resolución espectral", f"{fs_hz / len(sig_fft):.2f} Hz")
+        fi3.metric("Frecuencia dominante", f"{dom_f:.1f} Hz")
+
+        st.plotly_chart(
+            plotly_fft(fft_freqs_viz, fft_spectrum_viz,
+                       title=f"Espectro FFT — {fft_file}", fs_hz=fs_hz),
+            use_container_width=True,
+        )
+    else:
+        st.warning("La señal seleccionada tiene muy pocas muestras para calcular la FFT.")
 
 # ─────────────────────────────────────────
 # ALARM PANEL
@@ -581,7 +719,8 @@ with e2:
         pdf_bytes = get_cached_pdf(
             df, thr_rms, thr_kurt, sigma_mult, bn,
             alarm_rms, alarm_kurt, client_name, equipo_name,
-            ingeniero_nm, fs_hz
+            ingeniero_nm, fs_hz,
+            fft_freqs_viz, fft_spectrum_viz,
         )
     st.download_button(
         "📄  Descargar Informe Técnico PDF",
