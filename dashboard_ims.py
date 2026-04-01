@@ -34,6 +34,66 @@ WHITE         = colors.white
 PAL = {
     "bg": "#0F1117", "card": "#1C1F2E", "accent": "#4F8EF7",
     "danger": "#FF4B4B", "ok": "#00C48C", "text": "#E0E6F0", "muted": "#6B7280",
+    "warning": "#F59E0B", "harmonic": "#FF6B6B",
+}
+
+# ─────────────────────────────────────────
+# CATÁLOGO DE TIPOS DE MÁQUINAS SEMAPI
+# ─────────────────────────────────────────
+MACHINE_TYPES = {
+    "— Seleccionar tipo de máquina —": [],
+    "🔨 Molinos y equipos de trituración": [
+        "Molino Zerma", "Molino Preabreaker", "Pulverizadores",
+        "Granuladores", "Equipos tipo Cumberland", "Otro molino / triturador",
+    ],
+    "🌀 Extrusoras": [
+        "Extrusora (línea general)", "Otro modelo de extrusora",
+    ],
+    "🔃 Mezcladores": [
+        "Mezclador industrial", "Otro mezclador",
+    ],
+    "❄️ Enfriadores y torres de enfriamiento": [
+        "Sistema enfriador", "Torre de enfriamiento", "Otro enfriador",
+    ],
+    "💨 Sopladores (Blowers)": [
+        "Blower Pallman", "Blower Cumberland", "Blower HP3", "Soplador general",
+    ],
+    "🌡️ Secadores": [
+        "Secador Yankee PM4", "Secador de arcilla", "Otro secador",
+    ],
+    "📦 Zarandas": [
+        "Zaranda 620", "Otra zaranda",
+    ],
+    "🌬️ Ventiladores": [
+        "Ventilador principal (Main Fan)", "Ventilador de filtro principal",
+        "Ventilador de filtro de reparto", "Ventilador de premolienda",
+        "Ventilador de lecho fluido", "Ventilador del quemador del secador",
+        "Otro ventilador industrial",
+    ],
+    "🔧 Compresores": [
+        "Compresor SABROE SMC", "Compresor MYCOM", "Compresor ABC",
+        "Compresor AF B4000", "Compresor BELLIS", "Compresor Sullair",
+        "Otro compresor",
+    ],
+    "⚡ Equipos de generación de energía": [
+        "Generador CAT G3520H", "Alternador industrial", "Otro generador / alternador",
+    ],
+    "🚿 Bombas": [
+        "Bomba mecánica", "Bomba de agua caliente", "Bomba de agua fría",
+        "Bomba de condensado", "Bomba de envío a extrusora",
+        "Bomba principal de prensa", "Bomba de recirculación", "Otra bomba",
+    ],
+    "⚙️ Sistemas de transmisión de potencia": [
+        "Caja reductora (Gear Box)", "Motorreductor para molino principal",
+        "Otro sistema de transmisión",
+    ],
+    "🌀 Manejadoras de aire": [
+        "Manejadora de aire (climatización)", "Unidad de tratamiento de aire (UTA)",
+        "Otra manejadora",
+    ],
+    "🔬 Separadores dinámicos": [
+        "Separador dinámico industrial", "Otro separador",
+    ],
 }
 
 # ─────────────────────────────────────────
@@ -50,6 +110,16 @@ st.markdown(f"""
   .metric-label{{font-size:.82rem;color:{PAL['muted']};text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}}
   .status-ok{{color:{PAL['ok']};font-weight:600}}
   .status-alarm{{color:{PAL['danger']};font-weight:600}}
+  .machine-badge{{
+      background:linear-gradient(135deg,#1B3A6B,#2563EB);
+      border-radius:8px;padding:10px 16px;margin:6px 0 14px 0;
+      border-left:3px solid #E8720C;font-size:.88rem;font-weight:600;
+      color:#E0E6F0;
+  }}
+  .harmonic-info{{
+      background:{PAL['card']};border:1px solid #2A2D3E;border-left:3px solid #FF6B6B;
+      border-radius:8px;padding:10px 14px;margin:4px 0;font-size:.82rem;color:{PAL['muted']};
+  }}
   h1{{font-size:1.7rem!important;font-weight:700}}
   h2{{font-size:1.1rem!important;font-weight:600;color:{PAL['muted']}}}
 </style>""", unsafe_allow_html=True)
@@ -64,10 +134,10 @@ def is_valid_file(name: str) -> bool:
     if name.startswith('__MACOSX') or base.startswith('.') or name.endswith('/'):
         return False
     if '.' not in base:
-        return True 
+        return True
     ext = base.rsplit('.', 1)[-1]
     if ext.isdigit():
-        return True 
+        return True
     return base.endswith(VALID_EXTENSIONS)
 
 # ─────────────────────────────────────────
@@ -93,22 +163,40 @@ def compute_fft(signal, fs_hz: float):
     n = len(s)
     if n < 4:
         return np.array([0.0]), np.array([0.0])
-    window  = np.hanning(n)
-    s_win   = s * window
-    spectrum = np.abs(np.fft.rfft(s_win)) * 2.0 / n      # amplitud pico
+    window   = np.hanning(n)
+    s_win    = s * window
+    spectrum = np.abs(np.fft.rfft(s_win)) * 2.0 / n
     freqs    = np.fft.rfftfreq(n, d=1.0 / fs_hz)
     return freqs, spectrum
 
 def dominant_frequency(freqs, spectrum) -> float:
-    """Frecuencia con mayor amplitud espectral."""
     if len(spectrum) < 2:
         return np.nan
-    idx = int(np.argmax(spectrum[1:])) + 1   # ignora DC (índice 0)
+    idx = int(np.argmax(spectrum[1:])) + 1
     return float(freqs[idx])
+
+def compute_harmonics(rpm: float, n_harmonics: int, fs_hz: float) -> list[dict]:
+    """
+    Calcula las frecuencias armónicas a partir de las RPM.
+    f_n = n * (RPM / 60)   [Hz]
+    Devuelve una lista de dicts con orden, frecuencia y etiqueta.
+    Solo incluye armónicos dentro del rango de Nyquist.
+    """
+    if rpm <= 0:
+        return []
+    f1 = rpm / 60.0          # frecuencia fundamental en Hz
+    nyquist = fs_hz / 2.0
+    harmonics = []
+    for n in range(1, n_harmonics + 1):
+        f_n = n * f1
+        if f_n > nyquist:
+            break
+        label = f"{n}× = {f_n:.1f} Hz" if n > 1 else f"1× (Fund.) = {f_n:.1f} Hz"
+        harmonics.append({"orden": n, "frecuencia_hz": f_n, "label": label})
+    return harmonics
 
 @st.cache_data(show_spinner=False)
 def load_single_signal(zip_bytes: bytes, filename: str, sep_val: str, col_sig: str | None):
-    """Carga la señal cruda de UN archivo dentro del ZIP para mostrar su FFT."""
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         with z.open(filename) as f:
             df_s, sig_col, _ = read_flexible(f, sep_val, col_sig)
@@ -128,7 +216,6 @@ def read_flexible(file_obj, sep_val: str, col_sig: str | None = None, usecols=No
         return df, col_sig, True
     except Exception:
         pass
-
     df = pd.read_csv(io.BytesIO(raw), sep=sep_val, engine="python", header=None, dtype=np.float32)
     df.columns = [f"Canal_{i+1}" for i in range(df.shape[1])]
     sig_col = col_sig if col_sig in df.columns else "Canal_1"
@@ -192,9 +279,28 @@ def peek_zip(uploaded_zip, sep_val: str):
 # ─────────────────────────────────────────
 # PLOTLY CHARTS
 # ─────────────────────────────────────────
-def plotly_fft(freqs, spectrum, title="Espectro de Frecuencia", fs_hz=20_000):
-    """Gráfica interactiva del espectro FFT unilateral."""
+# Paleta de colores para las líneas armónicas (orden 1..N)
+HARMONIC_COLORS = [
+    "#FF6B6B",   # 1× fundamental — rojo
+    "#FFB347",   # 2× — naranja
+    "#FFFF66",   # 3× — amarillo
+    "#B0F566",   # 4× — verde lima
+    "#66F5D4",   # 5× — turquesa
+    "#66B2FF",   # 6× — azul cielo
+    "#CC99FF",   # 7× — violeta
+    "#FF99CC",   # 8× — rosa
+    "#FF6666",   # 9×
+    "#FFA07A",   # 10×
+]
+
+def plotly_fft(freqs, spectrum, title="Espectro de Frecuencia", fs_hz=20_000, harmonics: list | None = None):
+    """
+    Gráfica interactiva del espectro FFT unilateral.
+    harmonics: lista de dicts con claves 'frecuencia_hz' y 'label' (de compute_harmonics).
+    """
     fig = go.Figure()
+
+    # ── Espectro principal ──
     fig.add_trace(go.Scatter(
         x=freqs, y=spectrum,
         mode="lines", name="Amplitud",
@@ -202,18 +308,43 @@ def plotly_fft(freqs, spectrum, title="Espectro de Frecuencia", fs_hz=20_000):
         fill="tozeroy", fillcolor="rgba(79,142,247,0.15)",
         hovertemplate="<b>%{x:.1f} Hz</b><br>Amplitud: %{y:.6f}<extra></extra>",
     ))
-    # Marcar frecuencia dominante
+
+    # ── Frecuencia dominante ──
     if len(spectrum) > 1:
         dom_idx = int(np.argmax(spectrum[1:])) + 1
-        fig.add_vline(x=float(freqs[dom_idx]), line_dash="dash", line_color=PAL["danger"],
-                      annotation_text=f"f_dom = {freqs[dom_idx]:.1f} Hz",
-                      annotation_font_color=PAL["danger"])
+        fig.add_vline(
+            x=float(freqs[dom_idx]),
+            line_dash="dash", line_color=PAL["danger"],
+            annotation_text=f"f_dom = {freqs[dom_idx]:.1f} Hz",
+            annotation_font_color=PAL["danger"],
+        )
+
+    # ── Líneas armónicas ──
+    if harmonics:
+        for h in harmonics:
+            n       = h["orden"]
+            f_h     = h["frecuencia_hz"]
+            lbl     = h["label"]
+            color   = HARMONIC_COLORS[(n - 1) % len(HARMONIC_COLORS)]
+            # Línea vertical
+            fig.add_vline(
+                x=f_h,
+                line_dash="dot",
+                line_color=color,
+                line_width=1.6,
+                annotation_text=lbl,
+                annotation_font_color=color,
+                annotation_font_size=9,
+                annotation_position="top right" if n % 2 == 0 else "top left",
+            )
+
     fig.update_layout(
         title=dict(text=title, font=dict(size=14, color=PAL["text"])),
-        paper_bgcolor=PAL["card"], plot_bgcolor=PAL["card"], font=dict(color=PAL["text"], size=12),
+        paper_bgcolor=PAL["card"], plot_bgcolor=PAL["card"],
+        font=dict(color=PAL["text"], size=12),
         xaxis=dict(gridcolor="#2A2D3E", title="Frecuencia (Hz)", range=[0, fs_hz / 2]),
         yaxis=dict(gridcolor="#2A2D3E", title="Amplitud"),
-        margin=dict(l=20, r=20, t=48, b=20), height=340,
+        margin=dict(l=20, r=20, t=48, b=20), height=380,
         legend=dict(bgcolor="rgba(0,0,0,0)"),
     )
     return fig
@@ -240,20 +371,17 @@ def plotly_line(df, y_col, title, color, threshold=None, thr_label="Umbral"):
     )
     return fig
 
-
-def plotly_gauge_plumilla(valor_actual, umbral, titulo):    #SEMAFORO PEDIDO POR LESME
-    # Definimos los límites
+def plotly_gauge_plumilla(valor_actual, umbral, titulo):
     max_val = max(valor_actual * 1.2, umbral * 1.5)
-    if max_val == 0: max_val = 1  # Evitar división por cero
+    if max_val == 0: max_val = 1
 
-    # 1. Ocultamos la barra por defecto y configuramos los colores de fondo
     fig = go.Figure(go.Indicator(
         mode="gauge",
         value=valor_actual,
         title={'text': titulo, 'font': {'size': 16, 'color': PAL["text"]}},
         gauge={
             'axis': {'range': [0, max_val], 'tickwidth': 1, 'tickcolor': PAL["text"]},
-            'bar': {'color': "rgba(0,0,0,0)"},  # 👈 Oculta la barra circular gruesa
+            'bar': {'color': "rgba(0,0,0,0)"},
             'bgcolor': PAL["bg"],
             'borderwidth': 2,
             'bordercolor': "#2A2D3E",
@@ -270,41 +398,33 @@ def plotly_gauge_plumilla(valor_actual, umbral, titulo):    #SEMAFORO PEDIDO POR
         }
     ))
 
-    # 2. Matemática para la aguja (Trigonometría para rotar la plumilla)
-    prop = min(max(valor_actual / max_val, 0), 1)
-    theta = np.pi * (1 - prop) # Ángulo en radianes
-    
-    # Coordenadas de la punta de la aguja
-    r = 0.35 
+    prop  = min(max(valor_actual / max_val, 0), 1)
+    theta = np.pi * (1 - prop)
+    r     = 0.35
     x_tip = 0.5 + r * np.cos(theta)
     y_tip = 0.24 + r * np.sin(theta)
-
-    # Dibujamos el triángulo (la aguja) y un círculo en la base
-    path = f"M 0.49 0.24 L {x_tip} {y_tip} L 0.51 0.24 Z"
+    path  = f"M 0.49 0.24 L {x_tip} {y_tip} L 0.51 0.24 Z"
 
     fig.update_layout(
         shapes=[
-            # La plumilla
             dict(type="path", path=path, fillcolor="white", line_color="white", xref="paper", yref="paper"),
-            # El pin central de la aguja
-            dict(type="circle", x0=0.48, y0=0.22, x1=0.52, y1=0.26, fillcolor=PAL["card"], line_color="white", xref="paper", yref="paper")
+            dict(type="circle", x0=0.48, y0=0.22, x1=0.52, y1=0.26, fillcolor=PAL["card"], line_color="white", xref="paper", yref="paper"),
         ],
         annotations=[
-            # Movemos el número al centro abajo para que no estorbe
             dict(x=0.5, y=0.10, xref="paper", yref="paper",
                  text=f"<b>{valor_actual:.4f}</b>", showarrow=False,
                  font=dict(size=22, color="white"))
         ],
         paper_bgcolor=PAL["card"],
         height=300,
-        margin=dict(l=20, r=20, t=50, b=20)
+        margin=dict(l=20, r=20, t=50, b=20),
     )
     return fig
 
 # ─────────────────────────────────────────
 # PDF HELPERS
 # ─────────────────────────────────────────
-def make_fft_png(freqs, spectrum, fs_hz):
+def make_fft_png(freqs, spectrum, fs_hz, harmonics=None):
     fig, ax = plt.subplots(figsize=(7, 2.6))
     ax.plot(freqs, spectrum, color="#2563EB", linewidth=1.0)
     ax.fill_between(freqs, spectrum, alpha=0.2, color="#2563EB")
@@ -312,7 +432,17 @@ def make_fft_png(freqs, spectrum, fs_hz):
         dom_idx = int(np.argmax(spectrum[1:])) + 1
         ax.axvline(freqs[dom_idx], color="#CC3333", linestyle="--", linewidth=1,
                    label=f"f_dom = {freqs[dom_idx]:.1f} Hz")
-        ax.legend(fontsize=7)
+
+    # Líneas armónicas en el PDF
+    if harmonics:
+        mpl_colors = ["#FF6B6B","#FF9900","#CCCC00","#33AA33","#00AACC",
+                      "#3366FF","#9933FF","#FF66AA","#FF4444","#FF8866"]
+        for h in harmonics:
+            c = mpl_colors[(h["orden"] - 1) % len(mpl_colors)]
+            ax.axvline(h["frecuencia_hz"], color=c, linestyle=":", linewidth=0.9,
+                       label=h["label"])
+
+    ax.legend(fontsize=6, loc="upper right")
     ax.set_xlim(0, fs_hz / 2)
     ax.set_xlabel("Frecuencia (Hz)", fontsize=8)
     ax.set_ylabel("Amplitud", fontsize=8)
@@ -329,23 +459,20 @@ def make_fft_png(freqs, spectrum, fs_hz):
 
 def make_chart_png(df, y_col, ylabel, color, threshold=None):
     fig, ax = plt.subplots(figsize=(7, 2.6))
-    is_cat = df["datetime"].dtype == "O"
-    
-    x_data = np.arange(len(df)) if is_cat else df["datetime"].to_numpy()
-    y_data = df[y_col].to_numpy()
+    is_cat  = df["datetime"].dtype == "O"
+    x_data  = np.arange(len(df)) if is_cat else df["datetime"].to_numpy()
+    y_data  = df[y_col].to_numpy()
 
     ax.plot(x_data, y_data, color=color, linewidth=1.2, marker="o", markersize=2)
-    
     if threshold is not None:
         ax.axhline(threshold, color="#CC3333", linestyle="--", linewidth=1, label=f"Umbral {threshold:.4f}")
         mask = y_data > threshold
         if mask.any():
             ax.scatter(x_data[mask], y_data[mask], color="#CC3333", s=12, zorder=5)
         ax.legend(fontsize=7)
-        
+
     ax.set_ylabel(ylabel, fontsize=8)
     ax.set_xlabel("Muestras / Tiempo", fontsize=8)
-    
     if is_cat:
         step = max(1, len(df) // 10)
         ticks = np.arange(0, len(df), step)
@@ -353,13 +480,11 @@ def make_chart_png(df, y_col, ylabel, color, threshold=None):
         ax.set_xticklabels(df["datetime"].iloc[ticks].astype(str), rotation=25, ha="right", fontsize=6)
     else:
         ax.tick_params(axis="x", rotation=25, labelsize=7)
-        
     ax.tick_params(axis="y", labelsize=7)
     ax.grid(True, alpha=0.3)
     ax.set_facecolor("#F8F9FB")
     fig.patch.set_facecolor("white")
     fig.tight_layout(pad=0.5)
-    
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=130, bbox_inches="tight")
     plt.close(fig)
@@ -400,43 +525,55 @@ def section_box(label, S):
 # ─────────────────────────────────────────
 # PDF GENERATOR
 # ─────────────────────────────────────────
-def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs=None, fft_spectrum=None):
-    buf = io.BytesIO()
+def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n,
+                         alarm_rms, alarm_kurt, client_name, equipo, ingeniero,
+                         fs_hz, machine_type_label, rpm_val,
+                         fft_freqs=None, fft_spectrum=None, harmonics=None):
+    buf       = io.BytesIO()
     fecha_full = datetime.now().strftime("%d/%m/%Y")
     fecha_str  = datetime.now().strftime("%B %Y").capitalize()
-    S = semapi_styles()
+    S         = semapi_styles()
 
-    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.6*inch, rightMargin=0.6*inch, topMargin=0.85*inch, bottomMargin=0.65*inch)
+    doc = SimpleDocTemplate(buf, pagesize=letter,
+                            leftMargin=0.6*inch, rightMargin=0.6*inch,
+                            topMargin=0.85*inch, bottomMargin=0.65*inch)
     story = []
 
+    # Portada
     story.append(Spacer(1, 1.2*inch))
     story.append(Paragraph("INFORME DE", S["cover_title"]))
     story.append(Paragraph("ANÁLISIS DE VIBRACIONES", S["cover_title"]))
     story.append(Spacer(1, 0.4*inch))
     story.append(HRFlowable(width="70%", thickness=2, color=SEMAPI_ORANGE, lineCap="round", spaceAfter=18, spaceBefore=4, hAlign="CENTER"))
     story.append(Paragraph(client_name.upper(), S["cover_sub"]))
-    story.append(Spacer(1, 0.25*inch))
+    story.append(Spacer(1, 0.15*inch))
+    if machine_type_label and machine_type_label != "— Seleccionar tipo de máquina —":
+        story.append(Paragraph(f"Tipo de equipo: {machine_type_label}", S["cover_body"]))
+    story.append(Spacer(1, 0.1*inch))
     story.append(Paragraph(fecha_str, S["cover_body"]))
-    story.append(Spacer(1, 1.2*inch))
+    story.append(Spacer(1, 1.0*inch))
     story.append(Paragraph("Análisis de degradación de maquinaria industrial", S["cover_body"]))
     story.append(PageBreak())
 
+    # Introducción
     story.append(section_box("REF.: ANÁLISIS DE VIBRACIONES", S))
     story.append(Spacer(1, 8))
+    rpm_info = f" Las RPM operativas configuradas son <b>{rpm_val:.0f} RPM</b> (frecuencia fundamental: <b>{rpm_val/60:.2f} Hz</b>)." if rpm_val > 0 else ""
     story.append(Paragraph(
         f"Se efectuó servicio de análisis de vibraciones al equipo <b>{equipo}</b>. "
         f"Se procesaron <b>{len(df)}</b> archivos de medición con una frecuencia de muestreo de "
-        f"<b>{fs_hz/1000:.1f} kHz</b>, extrayendo indicadores estadísticos en dominio del tiempo.", S["body"]))
+        f"<b>{fs_hz/1000:.1f} kHz</b>, extrayendo indicadores estadísticos en dominio del tiempo.{rpm_info}", S["body"]))
     story.append(Spacer(1, 14))
 
+    # Tabla de indicadores
     story.append(section_box("TABLA DE DATOS – INDICADORES ESTADÍSTICOS", S))
     story.append(Spacer(1, 6))
     hdr = ["Indicador", "Valor Inicial", "Valor Final", "Valor Máximo", "Umbral alarma"]
     rows_tbl = [
-        ["RMS",          f"{df['rms'].iloc[0]:.5f}",             f"{df['rms'].iloc[-1]:.5f}",            f"{df['rms'].max():.5f}",            f"{thr_rms:.5f}"],
-        ["Kurtosis",     f"{df['kurtosis_excess'].iloc[0]:.3f}",f"{df['kurtosis_excess'].iloc[-1]:.3f}",f"{df['kurtosis_excess'].max():.3f}",f"{thr_kurt:.3f}"],
-        ["Crest Factor", f"{df['crest_factor'].iloc[0]:.3f}",  f"{df['crest_factor'].iloc[-1]:.3f}",  f"{df['crest_factor'].max():.3f}",  "—"],
-        ["Frec. Dominante (Hz)", f"{df['dominant_freq'].iloc[0]:.1f}", f"{df['dominant_freq'].iloc[-1]:.1f}", f"{df['dominant_freq'].max():.1f}", "—"],
+        ["RMS",                  f"{df['rms'].iloc[0]:.5f}",               f"{df['rms'].iloc[-1]:.5f}",              f"{df['rms'].max():.5f}",            f"{thr_rms:.5f}"],
+        ["Kurtosis",             f"{df['kurtosis_excess'].iloc[0]:.3f}",  f"{df['kurtosis_excess'].iloc[-1]:.3f}", f"{df['kurtosis_excess'].max():.3f}", f"{thr_kurt:.3f}"],
+        ["Crest Factor",         f"{df['crest_factor'].iloc[0]:.3f}",     f"{df['crest_factor'].iloc[-1]:.3f}",    f"{df['crest_factor'].max():.3f}",    "—"],
+        ["Frec. Dominante (Hz)", f"{df['dominant_freq'].iloc[0]:.1f}",    f"{df['dominant_freq'].iloc[-1]:.1f}",   f"{df['dominant_freq'].max():.1f}",   "—"],
     ]
     ft = Table([hdr] + rows_tbl, colWidths=[1.9*inch, 1.0*inch, 1.0*inch, 1.0*inch, 1.1*inch], repeatRows=1)
     ft.setStyle(TableStyle([
@@ -445,34 +582,57 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
         ("ALIGN", (1,0), (-1,-1), "CENTER"), ("ALIGN", (0,0), (0,-1), "LEFT"),
         ("ROWBACKGROUNDS", (0,1), (-1,-1), [SEMAPI_LGRAY, WHITE]),
         ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
-        ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4), ("LEFTPADDING", (0,0), (0,-1), 6),
+        ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ("LEFTPADDING", (0,0), (0,-1), 6),
     ]))
     story.append(ft)
     story.append(Spacer(1, 4))
     story.append(Paragraph(f"<i>Baseline: primeros {baseline_n} archivos · Umbral = media + {sigma_mult:.1f}σ</i>", S["body"]))
     story.append(Spacer(1, 14))
 
+    # Tabla de armónicos en el PDF (si aplica)
+    if harmonics:
+        story.append(section_box("ARMÓNICOS CALCULADOS A PARTIR DE RPM", S))
+        story.append(Spacer(1, 6))
+        harm_hdr  = ["Orden", "Frecuencia (Hz)", "Descripción"]
+        harm_rows = [[str(h["orden"]), f"{h['frecuencia_hz']:.2f}", h["label"]] for h in harmonics]
+        ht = Table([harm_hdr] + harm_rows, colWidths=[1.0*inch, 2.0*inch, 3.9*inch], repeatRows=1)
+        ht.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), SEMAPI_BLUE), ("TEXTCOLOR", (0,0), (-1,0), WHITE),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"), ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("ALIGN", (0,0), (-1,-1), "CENTER"),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [SEMAPI_LGRAY, WHITE]),
+            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#CCCCCC")),
+            ("TOPPADDING", (0,0), (-1,-1), 4), ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+        ]))
+        story.append(ht)
+        story.append(Spacer(1, 14))
+
+    # Gráficas de tendencia
     for label, y_col, ylabel, color, thr in [
-        ("GRÁFICA DE TENDENCIA – RMS",               "rms",             "RMS",          "#2563EB", thr_rms),
-        ("GRÁFICA DE TENDENCIA – KURTOSIS (EXCESS)",  "kurtosis_excess", "Kurtosis",     "#7C3AED", thr_kurt),
-        ("GRÁFICA DE TENDENCIA – CREST FACTOR",       "crest_factor",    "Crest Factor", "#059669", None),
-        ("GRÁFICA DE TENDENCIA – FRECUENCIA DOMINANTE", "dominant_freq", "Frec. Dom. (Hz)", "#D97706", None),
+        ("GRÁFICA DE TENDENCIA – RMS",                "rms",             "RMS",           "#2563EB", thr_rms),
+        ("GRÁFICA DE TENDENCIA – KURTOSIS (EXCESS)",   "kurtosis_excess", "Kurtosis",      "#7C3AED", thr_kurt),
+        ("GRÁFICA DE TENDENCIA – CREST FACTOR",        "crest_factor",    "Crest Factor",  "#059669", None),
+        ("GRÁFICA DE TENDENCIA – FRECUENCIA DOMINANTE","dominant_freq",   "Frec. Dom.(Hz)","#D97706", None),
     ]:
         story.append(section_box(label, S))
         story.append(Spacer(1, 6))
         story.append(RLImage(make_chart_png(df, y_col, ylabel, color, thr), width=6.5*inch, height=2.3*inch))
         story.append(Spacer(1, 14))
 
+    # FFT con armónicos
     if fft_freqs is not None and fft_spectrum is not None:
         story.append(section_box("ESPECTRO DE FRECUENCIA – FFT (ARCHIVO DE REFERENCIA)", S))
         story.append(Spacer(1, 6))
-        story.append(RLImage(make_fft_png(fft_freqs, fft_spectrum, fs_hz), width=6.5*inch, height=2.3*inch))
+        story.append(RLImage(make_fft_png(fft_freqs, fft_spectrum, fs_hz, harmonics),
+                             width=6.5*inch, height=2.3*inch))
         story.append(Spacer(1, 14))
 
+    # Diagnóstico
     n_rms  = len(alarm_rms)
     n_kurt = len(alarm_kurt)
     has_alarm = n_rms > 0 or n_kurt > 0
-    
+
     if has_alarm:
         first_dt = str(alarm_rms.iloc[0]["datetime"]) if n_rms > 0 else str(alarm_kurt.iloc[0]["datetime"])
         diag = "Los niveles de vibración presentan una <b>tendencia creciente</b> que supera el umbral estadístico. "
@@ -493,21 +653,30 @@ def generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms
     story.append(Paragraph("Cualquier comentario o inquietud con gusto lo atenderemos.", S["body"]))
     story.append(Spacer(1, 18))
     fdata = [
-        [Paragraph("<b>Realizó:</b>", S["bold_blue"]),           Paragraph("<b>Revisó:</b>", S["bold_blue"])],
-        [Paragraph(ingeniero, S["body"]),                          Paragraph("Ing. XXXXXX", S["body"])],
-        [Paragraph("Líder de Mantenimiento", S["body"]),          Paragraph("", S["body"])],
-        [Paragraph("Especialista en Vibraciones", S["body"]),     Paragraph("", S["body"])],
+        [Paragraph("<b>Realizó:</b>", S["bold_blue"]),     Paragraph("<b>Revisó:</b>", S["bold_blue"])],
+        [Paragraph(ingeniero, S["body"]),                   Paragraph("Ing. XXXXXX", S["body"])],
+        [Paragraph("Líder de Mantenimiento", S["body"]),   Paragraph("", S["body"])],
+        [Paragraph("Especialista en Vibraciones", S["body"]), Paragraph("", S["body"])],
     ]
     ftbl = Table(fdata, colWidths=[3.4*inch, 3.4*inch])
     ftbl.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"), ("TOPPADDING", (0,0), (-1,-1), 3)]))
     story.append(ftbl)
 
-    doc.build(story, onFirstPage=lambda c, d: _hf(c, d, fecha_full), onLaterPages=lambda c, d: _hf(c, d, fecha_full))
+    doc.build(story,
+              onFirstPage=lambda c, d: _hf(c, d, fecha_full),
+              onLaterPages=lambda c, d: _hf(c, d, fecha_full))
     return buf.getvalue()
 
 @st.cache_data(show_spinner=False)
-def get_cached_pdf(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs=None, fft_spectrum=None):
-    return generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n, alarm_rms, alarm_kurt, client_name, equipo, ingeniero, fs_hz, fft_freqs, fft_spectrum)
+def get_cached_pdf(df, thr_rms, thr_kurt, sigma_mult, baseline_n,
+                   alarm_rms, alarm_kurt, client_name, equipo, ingeniero,
+                   fs_hz, machine_type_label, rpm_val,
+                   fft_freqs=None, fft_spectrum=None, harmonics_tuple=None):
+    harmonics = list(harmonics_tuple) if harmonics_tuple else None
+    return generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n,
+                                alarm_rms, alarm_kurt, client_name, equipo, ingeniero,
+                                fs_hz, machine_type_label, rpm_val,
+                                fft_freqs, fft_spectrum, harmonics)
 
 # ─────────────────────────────────────────
 # SIDEBAR
@@ -516,9 +685,38 @@ with st.sidebar:
     st.markdown("## ⚙️ Ingesta de Datos (ZIP)")
     st.markdown("---")
 
+    # ── SECCIÓN 0: TIPO DE MÁQUINA ───────────────────────────────────────────
+    st.markdown("### 0. Tipo de Máquina")
+
+    machine_category = st.selectbox(
+        "Categoría de equipo",
+        options=list(MACHINE_TYPES.keys()),
+        index=0,
+        help="Selecciona el tipo de máquina analizada. Afecta la portada del informe.",
+    )
+
+    machine_model = None
+    if machine_category != "— Seleccionar tipo de máquina —":
+        models = MACHINE_TYPES[machine_category]
+        machine_model = st.selectbox("Modelo / subtipo", options=models)
+        # Badge visual de confirmación
+        cat_clean = machine_category.split(" ", 1)[-1]  # quita el emoji
+        st.markdown(
+            f'<div class="machine-badge">📌 {cat_clean}<br>'
+            f'<span style="font-weight:400;font-size:.82rem;color:#A0AEC0">{machine_model}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    machine_type_label = (
+        f"{machine_category.split(' ',1)[-1]} – {machine_model}"
+        if machine_model else "No especificado"
+    )
+
+    st.markdown("---")
+
     uploaded_zip = st.file_uploader(
         "📦 Sube un archivo .zip con tus CSV/TXT/DAT o archivos IMS",
-        type=["zip"]
+        type=["zip"],
     )
 
     cols     = []
@@ -535,37 +733,28 @@ with st.sidebar:
             "Punto y coma (;)": ";",
             "Espacio ( )":     r"\s+",
         }
-        
-        # Auto-detectar separador leyendo las primeras líneas del primer archivo
-        detected_name = "Tabulador (\\t)" # Valor por defecto seguro
+
+        detected_name = "Tabulador (\\t)"
         try:
             with zipfile.ZipFile(uploaded_zip) as z:
                 valid = [n for n in z.namelist() if is_valid_file(n)]
                 if valid:
                     with z.open(valid[0]) as f:
                         sample = f.read(2000).decode('utf-8', errors='ignore')
-                    
-                    # Contar cuál separador aparece más
-                    counts = {
-                        "\t": sample.count('\t'),
-                        ",":  sample.count(','),
-                        ";":  sample.count(';'),
-                        r"\s+": sample.count(' ') # Contamos espacios también
-                    }
+                    counts = {"\t": sample.count('\t'), ",": sample.count(','),
+                              ";": sample.count(';'), r"\s+": sample.count(' ')}
                     detected = max(counts, key=counts.get)
-                    
-                    # Si detectó algo que ocurre más de 0 veces
                     if counts[detected] > 0:
-                        map_name = {"\t": "Tabulador (\\t)", ",": "Coma (,)", ";": "Punto y coma (;)", r"\s+": "Espacio ( )"}
+                        map_name = {"\t": "Tabulador (\\t)", ",": "Coma (,)",
+                                    ";": "Punto y coma (;)", r"\s+": "Espacio ( )"}
                         detected_name = map_name[detected]
-                        st.caption(f"🔍 Separador detectado automáticamente: **{detected_name}**")
+                        st.caption(f"🔍 Separador detectado: **{detected_name}**")
         except Exception:
-            pass # Si falla (zip corrupto, no decodificable), cae al valor por defecto
-        
-        # El selectbox arranca en el detectado
+            pass
+
         sep_choice = st.selectbox("Separador de columnas", list(sep_dict.keys()),
                                   index=list(sep_dict.keys()).index(detected_name))
-        sep_val    = sep_dict[sep_choice]
+        sep_val = sep_dict[sep_choice]
 
         df_peek, cols = peek_zip(uploaded_zip, sep_val)
         if df_peek is None:
@@ -578,25 +767,46 @@ with st.sidebar:
         col_sig  = st.selectbox("🎯 Columna de Señal (Aceleración)", cols)
         col_time = st.selectbox(
             "⏱️ Eje X (Tendencia)", ["Usar nombre del archivo"] + cols,
-            help="Si cada archivo es una medición, usa el nombre del archivo para armar la tendencia."
+            help="Si cada archivo es una medición, usa el nombre del archivo para armar la tendencia.",
         )
 
     st.markdown("---")
     st.markdown("### 3. Parámetros Mecánicos")
+
     fs_hz = st.number_input("Frecuencia de Muestreo (Hz)",
-                            min_value=100, max_value=100_000, value=20_000, step=100)
-    baseline_pct = st.slider("Baseline (% inicial de datos)", 5, 40, 20, 5,
-                             help="Porcentaje de los primeros archivos usados como referencia de condición normal.")
-    sigma_mult = st.slider("Multiplicador σ (Alarmas)", 1.0, 5.0, 3.0, 0.5)
+                             min_value=100, max_value=100_000, value=20_000, step=100)
+
+    # ── RPM y Armónicos ──────────────────────────────────────────────────────
+    rpm_val = st.number_input(
+        "RPM de operación",
+        min_value=0, max_value=100_000, value=0, step=10,
+        help="Velocidad de giro del eje. Con valor > 0 se calcularán y mostrarán los armónicos en la FFT.",
+    )
+
+    n_harmonics = 1  # valor por defecto
+    if rpm_val > 0:
+        n_harmonics = st.slider(
+            "Número de armónicos a mostrar",
+            min_value=1, max_value=10, value=5,
+            help="Cantidad de múltiplos de la frecuencia fundamental (1×, 2×, 3×… n×) a marcar en el espectro.",
+        )
+        f1_hz = rpm_val / 60.0
+        st.markdown(
+            f'<div class="harmonic-info">'
+            f'⚙️ Frecuencia fundamental: <b>{f1_hz:.2f} Hz</b><br>'
+            f'Armónicos: 1× a {n_harmonics}×</div>',
+            unsafe_allow_html=True,
+        )
+
+    baseline_pct = st.slider("Baseline (% inicial de datos)", 5, 40, 20, 5)
+    sigma_mult   = st.slider("Multiplicador σ (Alarmas)", 1.0, 5.0, 3.0, 0.5)
 
     st.markdown("### 4. Datos del Informe")
     client_name  = st.text_input("Cliente",  value="PLANTA INDUSTRIAL")
     equipo_name  = st.text_input("Equipo",   value="Bomba Centrífuga - Lado Acople")
     ingeniero_nm = st.text_input("Realizó",  value="Ing. ")
 
-# Creamos el botón, pero no guardamos su valor directamente
     if st.button("▶  Procesar y Analizar", use_container_width=True, type="primary"):
-        # Cuando le dan clic, guardamos en la "memoria" que ya se analizó
         st.session_state.datos_procesados = True
 
 # ─────────────────────────────────────────
@@ -606,13 +816,27 @@ st.markdown("# ⚙️ Dashboard de Monitoreo de Condición")
 st.markdown("## Análisis de Tendencias de Vibración · SEMAPI")
 st.markdown("---")
 
+# Mostrar badge de máquina seleccionada en la pantalla principal
+if machine_category != "— Seleccionar tipo de máquina —":
+    col_badge, _ = st.columns([3, 5])
+    with col_badge:
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,#1B3A6B22,#2563EB22);'
+            f'border:1px solid #2563EB55;border-left:4px solid #E8720C;border-radius:8px;'
+            f'padding:10px 16px;margin-bottom:12px;">'
+            f'<span style="font-size:.78rem;color:#6B7280;text-transform:uppercase;letter-spacing:.05em;">Equipo analizado</span><br>'
+            f'<span style="font-weight:700;font-size:1rem;color:#E0E6F0">{machine_category.split(" ",1)[-1]}</span><br>'
+            f'<span style="font-size:.88rem;color:#A0AEC0">{machine_model}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
 if df_peek is not None and col_sig:
     with st.expander("🔍 Vista previa del primer archivo del ZIP"):
         st.dataframe(df_peek, use_container_width=True)
 
-# Verificamos si existe en la memoria. Si no existe o es falso, detenemos la app
 if not st.session_state.get("datos_procesados", False):
-    st.info("👈 Sube un archivo .zip, mapea tus columnas en la barra lateral y presiona **Procesar y Analizar**.")
+    st.info("👈 Sube un archivo .zip, selecciona el tipo de máquina, mapea tus columnas y presiona **Procesar y Analizar**.")
     st.stop()
 
 # ─────────────────────────────────────────
@@ -633,22 +857,20 @@ if df.empty:
 bn = max(2, int(len(df) * baseline_pct / 100))
 st.caption(f"📐 Baseline automático: primeros **{bn} archivos** ({baseline_pct}% de {len(df)})")
 
-base_rms  = df["rms"].iloc[:bn]
-mu_r, sd_r = base_rms.mean(), base_rms.std(ddof=1) if bn > 1 else 0.
-base_kurt = df["kurtosis_excess"].iloc[:bn]
-mu_k, sd_k = base_kurt.mean(), base_kurt.std(ddof=1) if bn > 1 else 0.
-
-thr_rms   = mu_r + sigma_mult * sd_r
-thr_kurt  = mu_k + sigma_mult * sd_k
-alarm_rms  = df[df["rms"]             > thr_rms]
-alarm_kurt = df[df["kurtosis_excess"] > thr_kurt]
+base_rms        = df["rms"].iloc[:bn]
+mu_r, sd_r      = base_rms.mean(), base_rms.std(ddof=1) if bn > 1 else 0.
+base_kurt       = df["kurtosis_excess"].iloc[:bn]
+mu_k, sd_k      = base_kurt.mean(), base_kurt.std(ddof=1) if bn > 1 else 0.
+thr_rms         = mu_r + sigma_mult * sd_r
+thr_kurt        = mu_k + sigma_mult * sd_k
+alarm_rms       = df[df["rms"]             > thr_rms]
+alarm_kurt      = df[df["kurtosis_excess"] > thr_kurt]
 
 # ─────────────────────────────────────────
 # KPI CARDS Y TACÓMETROS
 # ─────────────────────────────────────────
 st.markdown("### 📊 Indicadores Globales")
 
-# Fila 1: Tarjetas de texto pequeñas
 k1, k2, k3, k4 = st.columns(4)
 
 def kpi(col, label, value, fmt=".4f"):
@@ -664,57 +886,66 @@ kpi(k4, f"Umbral RMS ({sigma_mult}σ)", thr_rms)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# Fila 2: Los Tacómetros visuales
 t1, t2 = st.columns(2)
-
 with t1:
-    # Tacómetro para RMS (Tomamos el valor máximo registrado)
-    fig_gauge_rms = plotly_gauge_plumilla(df["rms"].max(), thr_rms, "Estado Severidad RMS")
-    st.plotly_chart(fig_gauge_rms, use_container_width=True)
-
+    st.plotly_chart(plotly_gauge_plumilla(df["rms"].max(), thr_rms, "Estado Severidad RMS"), use_container_width=True)
 with t2:
-    # Tacómetro para Kurtosis
-    fig_gauge_kurt = plotly_gauge_plumilla(df["kurtosis_excess"].max(), thr_kurt, "Estado Impactos (Kurtosis)")
-    st.plotly_chart(fig_gauge_kurt, use_container_width=True)
+    st.plotly_chart(plotly_gauge_plumilla(df["kurtosis_excess"].max(), thr_kurt, "Estado Impactos (Kurtosis)"), use_container_width=True)
 
 # ─────────────────────────────────────────
-# CHARTS
+# CHARTS DE TENDENCIA
 # ─────────────────────────────────────────
 c1, c2 = st.columns(2)
 with c1:
     st.plotly_chart(plotly_line(df, "rms", "Tendencia RMS (Energía Global)",
-                                PAL["accent"], thr_rms, f"Umbral {sigma_mult:.1f}σ"),
-                    use_container_width=True)
+                                PAL["accent"], thr_rms, f"Umbral {sigma_mult:.1f}σ"), use_container_width=True)
 with c2:
     st.plotly_chart(plotly_line(df, "kurtosis_excess", "Tendencia Kurtosis (Impulsividad)",
-                                "#A78BFA", thr_kurt, f"Umbral {sigma_mult:.1f}σ"),
-                    use_container_width=True)
+                                "#A78BFA", thr_kurt, f"Umbral {sigma_mult:.1f}σ"), use_container_width=True)
 
 c3, c4 = st.columns(2)
 with c3:
-    st.plotly_chart(plotly_line(df, "crest_factor", "Tendencia Factor de Cresta (Picos)", "#34D399"),
-                    use_container_width=True)
+    st.plotly_chart(plotly_line(df, "crest_factor", "Tendencia Factor de Cresta (Picos)", "#34D399"), use_container_width=True)
 with c4:
-    st.plotly_chart(plotly_line(df, "dominant_freq", "Tendencia Frecuencia Dominante (Hz)", "#F59E0B"),
-                    use_container_width=True)
+    st.plotly_chart(plotly_line(df, "dominant_freq", "Tendencia Frecuencia Dominante (Hz)", "#F59E0B"), use_container_width=True)
 
 # ─────────────────────────────────────────
-# FFT SPECTRAL ANALYSIS SECTION
+# FFT SPECTRAL ANALYSIS — con armónicos
 # ─────────────────────────────────────────
 st.markdown("---")
 st.markdown("### 📡 Análisis Espectral – FFT")
 
+# Panel de armónicos calculados
+harmonics_list = []
+if rpm_val > 0:
+    harmonics_list = compute_harmonics(rpm_val, n_harmonics, fs_hz)
+    if harmonics_list:
+        with st.expander(f"🎯 Armónicos calculados ({len(harmonics_list)} líneas) — {rpm_val:.0f} RPM", expanded=True):
+            cols_harm = st.columns(min(len(harmonics_list), 5))
+            for idx, h in enumerate(harmonics_list):
+                color = HARMONIC_COLORS[(h["orden"] - 1) % len(HARMONIC_COLORS)]
+                cols_harm[idx % 5].markdown(
+                    f'<div style="background:{PAL["card"]};border:1px solid #2A2D3E;'
+                    f'border-top:3px solid {color};border-radius:6px;padding:8px 10px;'
+                    f'text-align:center;margin:2px;">'
+                    f'<div style="font-size:.72rem;color:#6B7280">{h["orden"]}× armónico</div>'
+                    f'<div style="font-size:1.1rem;font-weight:700;color:{color}">{h["frecuencia_hz"]:.1f} Hz</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.warning("⚠️ Todos los armónicos quedan fuera del rango de Nyquist con la fs configurada.")
+else:
+    st.info("💡 Ingresa las **RPM de operación** en la barra lateral para superponer los armónicos sobre el espectro.", icon="ℹ️")
+
 fft_file = st.selectbox(
     "Selecciona un archivo para ver su espectro de frecuencia",
-    df["filename"].tolist(),
-    index=0,
-    key="fft_selector",
+    df["filename"].tolist(), index=0, key="fft_selector",
 )
 
 fft_freqs_viz = fft_spectrum_viz = None
 
 if fft_file:
-    # Buscar el nombre completo dentro del ZIP (puede tener subdirectorio)
     with zipfile.ZipFile(io.BytesIO(uploaded_zip.getvalue())) as z_names:
         all_valid = [n for n in z_names.namelist() if is_valid_file(n)]
     full_name = next((n for n in all_valid if n.split("/")[-1] == fft_file), fft_file)
@@ -732,10 +963,29 @@ if fft_file:
         fi3.metric("Frecuencia dominante", f"{dom_f:.1f} Hz")
 
         st.plotly_chart(
-            plotly_fft(fft_freqs_viz, fft_spectrum_viz,
-                       title=f"Espectro FFT — {fft_file}", fs_hz=fs_hz),
+            plotly_fft(
+                fft_freqs_viz, fft_spectrum_viz,
+                title=f"Espectro FFT — {fft_file}",
+                fs_hz=fs_hz,
+                harmonics=harmonics_list if harmonics_list else None,
+            ),
             use_container_width=True,
         )
+
+        # Detección automática de coincidencias armónico ↔ pico espectral
+        if harmonics_list and len(fft_spectrum_viz) > 1:
+            tol_hz = (fs_hz / len(sig_fft)) * 3   # tolerancia = 3 bins espectrales
+            matches = []
+            for h in harmonics_list:
+                mask_near = np.abs(fft_freqs_viz - h["frecuencia_hz"]) <= tol_hz
+                if mask_near.any():
+                    local_peak = float(fft_spectrum_viz[mask_near].max())
+                    global_max = float(fft_spectrum_viz[1:].max())
+                    pct = local_peak / global_max * 100 if global_max > 0 else 0.0
+                    if pct > 5.0:   # solo reportar si el pico es notable (> 5% del máximo global)
+                        matches.append(f"**{h['label']}** → pico local = {pct:.1f}% del máximo espectral")
+            if matches:
+                st.warning("⚠️ **Coincidencias armónico–espectro detectadas:**\n\n" + "\n\n".join(f"- {m}" for m in matches))
     else:
         st.warning("La señal seleccionada tiene muy pocas muestras para calcular la FFT.")
 
@@ -751,22 +1001,18 @@ with ca:
     if alarm_rms.empty:
         st.markdown("<span class='status-ok'>✔ Sin alarmas RMS</span>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<span class='status-alarm'>Primera alarma: {alarm_rms.iloc[0]['datetime']}</span>",
-                    unsafe_allow_html=True)
+        st.markdown(f"<span class='status-alarm'>Primera alarma: {alarm_rms.iloc[0]['datetime']}</span>", unsafe_allow_html=True)
         with st.expander("Ver detalle"):
-            st.dataframe(alarm_rms[["datetime", "filename", "rms"]],
-                         use_container_width=True, hide_index=True)
+            st.dataframe(alarm_rms[["datetime", "filename", "rms"]], use_container_width=True, hide_index=True)
 
 with cb:
     st.markdown(f"**Kurtosis — {len(alarm_kurt)} eventos** (umbral = `{thr_kurt:.4f}`)")
     if alarm_kurt.empty:
         st.markdown("<span class='status-ok'>✔ Sin alarmas Kurtosis</span>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<span class='status-alarm'>Primera alarma: {alarm_kurt.iloc[0]['datetime']}</span>",
-                    unsafe_allow_html=True)
+        st.markdown(f"<span class='status-alarm'>Primera alarma: {alarm_kurt.iloc[0]['datetime']}</span>", unsafe_allow_html=True)
         with st.expander("Ver detalle"):
-            st.dataframe(alarm_kurt[["datetime", "filename", "kurtosis_excess"]],
-                         use_container_width=True, hide_index=True)
+            st.dataframe(alarm_kurt[["datetime", "filename", "kurtosis_excess"]], use_container_width=True, hide_index=True)
 
 # ─────────────────────────────────────────
 # EXPORTS
@@ -780,21 +1026,26 @@ with e1:
         data=df.to_csv(index=False).encode(),
         file_name="tendencia_vibraciones.csv",
         mime="text/csv",
-        use_container_width=True
+        use_container_width=True,
     )
 
 with e2:
     with st.spinner("Compilando reporte técnico PDF..."):
+        # Convertimos la lista de dicts a tupla de tuplas para que sea hasheable por st.cache_data
+        harmonics_tuple = tuple(
+            (h["orden"], h["frecuencia_hz"], h["label"]) for h in harmonics_list
+        ) if harmonics_list else None
+        # Reconstruimos como list of dicts dentro de get_cached_pdf
         pdf_bytes = get_cached_pdf(
             df, thr_rms, thr_kurt, sigma_mult, bn,
             alarm_rms, alarm_kurt, client_name, equipo_name,
-            ingeniero_nm, fs_hz,
-            fft_freqs_viz, fft_spectrum_viz,
+            ingeniero_nm, fs_hz, machine_type_label, rpm_val,
+            fft_freqs_viz, fft_spectrum_viz, harmonics_tuple,
         )
     st.download_button(
         "📄  Descargar Informe Técnico PDF",
         data=pdf_bytes,
         file_name=f"Reporte_Vibraciones_{equipo_name.replace(' ', '_')}.pdf",
         mime="application/pdf",
-        use_container_width=True
+        use_container_width=True,
     )
