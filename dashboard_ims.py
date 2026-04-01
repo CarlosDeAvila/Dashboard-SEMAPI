@@ -240,6 +240,67 @@ def plotly_line(df, y_col, title, color, threshold=None, thr_label="Umbral"):
     )
     return fig
 
+
+def plotly_gauge_plumilla(valor_actual, umbral, titulo):    #SEMAFORO PEDIDO POR LESME
+    # Definimos los límites
+    max_val = max(valor_actual * 1.2, umbral * 1.5)
+    if max_val == 0: max_val = 1  # Evitar división por cero
+
+    # 1. Ocultamos la barra por defecto y configuramos los colores de fondo
+    fig = go.Figure(go.Indicator(
+        mode="gauge",
+        value=valor_actual,
+        title={'text': titulo, 'font': {'size': 16, 'color': PAL["text"]}},
+        gauge={
+            'axis': {'range': [0, max_val], 'tickwidth': 1, 'tickcolor': PAL["text"]},
+            'bar': {'color': "rgba(0,0,0,0)"},  # 👈 Oculta la barra circular gruesa
+            'bgcolor': PAL["bg"],
+            'borderwidth': 2,
+            'bordercolor': "#2A2D3E",
+            'steps': [
+                {'range': [0, umbral * 0.8], 'color': PAL["ok"]},
+                {'range': [umbral * 0.8, umbral], 'color': "#F59E0B"},
+                {'range': [umbral, max_val], 'color': PAL["danger"]}
+            ],
+            'threshold': {
+                'line': {'color': "white", 'width': 2},
+                'thickness': 0.75,
+                'value': umbral
+            }
+        }
+    ))
+
+    # 2. Matemática para la aguja (Trigonometría para rotar la plumilla)
+    prop = min(max(valor_actual / max_val, 0), 1)
+    theta = np.pi * (1 - prop) # Ángulo en radianes
+    
+    # Coordenadas de la punta de la aguja
+    r = 0.35 
+    x_tip = 0.5 + r * np.cos(theta)
+    y_tip = 0.24 + r * np.sin(theta)
+
+    # Dibujamos el triángulo (la aguja) y un círculo en la base
+    path = f"M 0.49 0.24 L {x_tip} {y_tip} L 0.51 0.24 Z"
+
+    fig.update_layout(
+        shapes=[
+            # La plumilla
+            dict(type="path", path=path, fillcolor="white", line_color="white", xref="paper", yref="paper"),
+            # El pin central de la aguja
+            dict(type="circle", x0=0.48, y0=0.22, x1=0.52, y1=0.26, fillcolor=PAL["card"], line_color="white", xref="paper", yref="paper")
+        ],
+        annotations=[
+            # Movemos el número al centro abajo para que no estorbe
+            dict(x=0.5, y=0.10, xref="paper", yref="paper",
+                 text=f"<b>{valor_actual:.4f}</b>", showarrow=False,
+                 font=dict(size=22, color="white"))
+        ],
+        paper_bgcolor=PAL["card"],
+        height=300,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+    return fig
+
 # ─────────────────────────────────────────
 # PDF HELPERS
 # ─────────────────────────────────────────
@@ -583,9 +644,12 @@ alarm_rms  = df[df["rms"]             > thr_rms]
 alarm_kurt = df[df["kurtosis_excess"] > thr_kurt]
 
 # ─────────────────────────────────────────
-# KPI CARDS
+# KPI CARDS Y TACÓMETROS
 # ─────────────────────────────────────────
-k1, k2, k3, k4, k5 = st.columns(5)
+st.markdown("### 📊 Indicadores Globales")
+
+# Fila 1: Tarjetas de texto pequeñas
+k1, k2, k3, k4 = st.columns(4)
 
 def kpi(col, label, value, fmt=".4f"):
     col.markdown(f"""<div class="metric-card">
@@ -594,19 +658,24 @@ def kpi(col, label, value, fmt=".4f"):
     </div>""", unsafe_allow_html=True)
 
 kpi(k1, "Archivos (Eventos)", len(df), "d")
-kpi(k2, "RMS Máx",            df["rms"].max())
-kpi(k3, "Kurtosis Máx",       df["kurtosis_excess"].max(), ".2f")
+kpi(k2, "RMS Máx", df["rms"].max())
+kpi(k3, "Kurtosis Máx", df["kurtosis_excess"].max(), ".2f")
 kpi(k4, f"Umbral RMS ({sigma_mult}σ)", thr_rms)
 
-has_alarm = len(alarm_rms) > 0 or len(alarm_kurt) > 0
-lbl = "🔴 ALARMA" if has_alarm else "🟢 NORMAL"
-cls = "status-alarm" if has_alarm else "status-ok"
-k5.markdown(f"""<div class="metric-card">
-    <div class="metric-label">Estado Condición</div>
-    <div class="metric-value" style="font-size:1.4rem"><span class="{cls}">{lbl}</span></div>
-</div>""", unsafe_allow_html=True)
-
 st.markdown("<br>", unsafe_allow_html=True)
+
+# Fila 2: Los Tacómetros visuales
+t1, t2 = st.columns(2)
+
+with t1:
+    # Tacómetro para RMS (Tomamos el valor máximo registrado)
+    fig_gauge_rms = plotly_gauge_plumilla(df["rms"].max(), thr_rms, "Estado Severidad RMS")
+    st.plotly_chart(fig_gauge_rms, use_container_width=True)
+
+with t2:
+    # Tacómetro para Kurtosis
+    fig_gauge_kurt = plotly_gauge_plumilla(df["kurtosis_excess"].max(), thr_kurt, "Estado Impactos (Kurtosis)")
+    st.plotly_chart(fig_gauge_kurt, use_container_width=True)
 
 # ─────────────────────────────────────────
 # CHARTS
