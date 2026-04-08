@@ -672,7 +672,7 @@ def get_cached_pdf(df, thr_rms, thr_kurt, sigma_mult, baseline_n,
                    alarm_rms, alarm_kurt, client_name, equipo, ingeniero,
                    fs_hz, machine_type_label, rpm_val,
                    fft_freqs=None, fft_spectrum=None, harmonics_tuple=None):
-    harmonics = list(harmonics_tuple) if harmonics_tuple else None
+    harmonics = [{"orden": o, "frecuencia_hz": f, "label": l} for o, f, l in harmonics_tuple] if harmonics_tuple else None
     return generate_pdf_report(df, thr_rms, thr_kurt, sigma_mult, baseline_n,
                                 alarm_rms, alarm_kurt, client_name, equipo, ingeniero,
                                 fs_hz, machine_type_label, rpm_val,
